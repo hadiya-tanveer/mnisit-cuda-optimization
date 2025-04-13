@@ -3,6 +3,7 @@
 #include <math.h>
 #include <time.h>
 #include <cuda.h>
+#include <float.h>
 
 #define IMAGE_SIZE_TRAIN 60000
 #define IMAGE_SIZE_TEST 10000
@@ -143,7 +144,7 @@ __global__ void forward_output_kernel(const double *W2, const double *b2,
         output[i] = sum;
     }
 }
-
+/*
 // Kernel to perform softmax on the output vector.
 __global__ void softmax_kernel(double *output) {
     __shared__ double sum_shared;
@@ -165,6 +166,31 @@ __global__ void softmax_kernel(double *output) {
 
     if (i < OUTPUT_SIZE) {
         output[i] /= sum_shared;
+    }
+}
+*/
+__global__ void softmax_kernel(double* input, int size = OUTPUT_SIZE) {
+    int tid = threadIdx.x;
+
+    
+    float max_val = -FLT_MAX;
+    if (tid == 0) {
+        for (int i = 0; i < size; ++i) {
+            if (input[i] > max_val) {
+                max_val = input[i];
+            }
+        }
+
+        // Compute sum of exponentials
+        float sum = 0.0f;
+        for (int i = 0; i < size; ++i) {
+            sum += expf(input[i] - max_val);
+        }
+
+        // Normalize to get softmax
+        for (int i = 0; i < size; ++i) {
+            input[i] = expf(input[i] - max_val) / sum;
+        }
     }
 }
 
