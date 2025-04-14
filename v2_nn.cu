@@ -1,5 +1,12 @@
+/*
+* This implementation is the naive version of neural network classification.
+* Here simple CUDA threads are launched which uses global memory for each access.
+* No further optimization techniques are used in this version.
+*/
+
 #include <stdio.h>
 #include <stdlib.h>
+
 #include <math.h>
 #include <time.h>
 #include <cuda.h>
@@ -55,6 +62,17 @@ void softmax(double* x, int size) {
     }
 }
 
+// Helper to flatten a 2D matrix into a contiguous array.
+double* flattenMatrix(double** matrix, int rows, int cols) {
+    double* flat = (double*)malloc(rows * cols * sizeof(double));
+    for (int i = 0; i < rows; i++) {
+        for (int j = 0; j < cols; j++) {
+            flat[i * cols + j] = matrix[i][j];
+        }
+    }
+    return flat;
+}
+
 // Neural network structure with additional device pointers.
 typedef struct {
     double** W1;    // host 2D weight matrix for layer 1
@@ -68,17 +86,6 @@ typedef struct {
     double* d_b1;
     double* d_b2;
 } NeuralNetwork;
-
-// Helper to flatten a 2D matrix into a contiguous array.
-double* flattenMatrix(double** matrix, int rows, int cols) {
-    double* flat = (double*)malloc(rows * cols * sizeof(double));
-    for (int i = 0; i < rows; i++) {
-        for (int j = 0; j < cols; j++) {
-            flat[i * cols + j] = matrix[i][j];
-        }
-    }
-    return flat;
-}
 
 // Initialize neural network and allocate device memory.
 NeuralNetwork* createNetwork() {
@@ -144,34 +151,9 @@ __global__ void forward_output_kernel(const double *W2, const double *b2,
         output[i] = sum;
     }
 }
-/*
-// Kernel to perform softmax on the output vector.
-__global__ void softmax_kernel(double *output) {
-    __shared__ double sum_shared;
-    int i = threadIdx.x;
-    double val = (i < OUTPUT_SIZE) ? exp(output[i]) : 0.0;
-    if (i < OUTPUT_SIZE) {
-        output[i] = val;
-    }
-    __syncthreads();
 
-    if (i == 0) {
-        double s = 0;
-        for (int j = 0; j < OUTPUT_SIZE; j++) {
-            s += output[j];
-        }
-        sum_shared = s;
-    }
-    __syncthreads();
-
-    if (i < OUTPUT_SIZE) {
-        output[i] /= sum_shared;
-    }
-}
-*/
 __global__ void softmax_kernel(double* input, int size = OUTPUT_SIZE) {
     int tid = threadIdx.x;
-
     
     float max_val = -FLT_MAX;
     if (tid == 0) {
@@ -277,7 +259,8 @@ void backward(NeuralNetwork* net, double* input, double* hidden, double* output,
     // Copy input and output gradients to device.
     cudaMemcpy(d_input, input, INPUT_SIZE * sizeof(double), cudaMemcpyHostToDevice);
     cudaMemcpy(d_output_d, d_output, OUTPUT_SIZE * sizeof(double), cudaMemcpyHostToDevice);
-    // Also copy hidden layer (from forward pass) to device.
+    
+    // Copy hidden from the FORWARD() function.
     double *d_hidden_forward;
     cudaMalloc(&d_hidden_forward, HIDDEN_SIZE * sizeof(double));
     cudaMemcpy(d_hidden_forward, hidden, HIDDEN_SIZE * sizeof(double), cudaMemcpyHostToDevice);
@@ -286,7 +269,7 @@ void backward(NeuralNetwork* net, double* input, double* hidden, double* output,
     compute_d_hidden<<<1, HIDDEN_SIZE>>>(d_hidden_d, net->d_W2, d_output_d, d_hidden_forward);
     cudaDeviceSynchronize();
 
-    // Copy the computed hidden gradient back to host (if needed for bias update)
+    // Copy the computed hidden gradient back to host.
     cudaMemcpy(d_hidden, d_hidden_d, HIDDEN_SIZE * sizeof(double), cudaMemcpyDeviceToHost);
     for (int i = 0; i < HIDDEN_SIZE; i++) {
         // Use the host copy of d_hidden for bias update (if desired)
@@ -307,10 +290,13 @@ void backward(NeuralNetwork* net, double* input, double* hidden, double* output,
     for (int i = 0; i < OUTPUT_SIZE; i++) {
         net->b2[i] -= LEARNING_RATE * d_output[i];
     }
+
     for (int i = 0; i < HIDDEN_SIZE; i++) {
         // For d_hidden bias update, you could use the d_hidden computed on device.
         net->b1[i] -= LEARNING_RATE * d_hidden[i];
     }
+
+    // Copy back to host to save data.
     cudaMemcpy(net->d_b2, net->b2, OUTPUT_SIZE * sizeof(double), cudaMemcpyHostToDevice);
     cudaMemcpy(net->d_b1, net->b1, HIDDEN_SIZE * sizeof(double), cudaMemcpyHostToDevice);
 
