@@ -44,13 +44,6 @@ void freeMatrix(double** mat, int rows) {
     free(mat);
 }
 
-// Activation functions on host (used only for initial testing)
-void relu(double* x, int size) {
-    for (int i = 0; i < size; i++) {
-        x[i] = (x[i] > 0) ? x[i] : 0;
-    }
-}
-
 void softmax(double* x, int size) {
     double sum = 0;
     for (int i = 0; i < size; i++) {
@@ -126,84 +119,63 @@ NeuralNetwork* createNetwork() {
     return net;
 }
 
-// Kernel to compute hidden layer with ReLU activation.
-__global__ void forward_hidden_kernel(const double *W1, const double *b1,
-                                        const double *input, double *hidden) {
-    int i = blockIdx.x * blockDim.x + threadIdx.x;
-    if (i < HIDDEN_SIZE) {
-        double sum = b1[i];
-        for (int j = 0; j < INPUT_SIZE; j++) {
-            sum += W1[i * INPUT_SIZE + j] * input[j];
-        }
-        hidden[i] = (sum > 0) ? sum : 0;
+// Kernel to compute hidden layer and apply ReLU activation directly.
+__global__ void forward_hidden_kernel(const double *W1, const double *B1, const double *input, double *hidden) {
+    int index = blockIdx.x * blockDim.x + threadIdx.x;
+    
+    if (index >= HIDDEN_SIZE)  return;
+    
+    double sum = B1[index];
+    for (int imagecol = 0; imagecol < INPUT_SIZE; imagecol++) {
+        sum += W1[index * INPUT_SIZE + imagecol] * input[imagecol];
     }
+
+    hidden[index] = (sum > 0) ? sum : 0;
 }
 
 // Kernel to compute output layer (logits).
-__global__ void forward_output_kernel(const double *W2, const double *b2,
-                                        const double *hidden, double *output) {
-    int i = blockIdx.x * blockDim.x + threadIdx.x;
-    if (i < OUTPUT_SIZE) {
-        double sum = b2[i];
-        for (int j = 0; j < HIDDEN_SIZE; j++) {
-            sum += W2[i * HIDDEN_SIZE + j] * hidden[j];
-        }
-        output[i] = sum;
-    }
-}
-
-__global__ void softmax_kernel(double* input, int size = OUTPUT_SIZE) {
-    int tid = threadIdx.x;
+__global__ void forward_output_kernel(const double *W2, const double *b2, const double *hidden, double *output) {
+    int index = blockIdx.x * blockDim.x + threadIdx.x;
+    if (index >= OUTPUT_SIZE)  return;
     
-    float max_val = -FLT_MAX;
-    if (tid == 0) {
-        for (int i = 0; i < size; ++i) {
-            if (input[i] > max_val) {
-                max_val = input[i];
-            }
-        }
-
-        // Compute sum of exponentials
-        float sum = 0.0f;
-        for (int i = 0; i < size; ++i) {
-            sum += expf(input[i] - max_val);
-        }
-
-        // Normalize to get softmax
-        for (int i = 0; i < size; ++i) {
-            input[i] = expf(input[i] - max_val) / sum;
-        }
+    double sum = b2[index];
+    for (int hiddencol = 0; hiddencol < HIDDEN_SIZE; hiddencol++) {
+        sum += W2[index * HIDDEN_SIZE + hiddencol] * hidden[hiddencol];
     }
+
+    output[index] = sum;
 }
 
 // Optimized forward pass using the GPU.
-void forward(NeuralNetwork* net,
-             double* input,   // host input vector (size INPUT_SIZE)
-             double* hidden,  // host hidden vector (size HIDDEN_SIZE)
-             double* output)  // host output vector (size OUTPUT_SIZE)
-{
+void forward(NeuralNetwork* net, double* input, double* hidden, double* output)  {
     double *d_input, *d_hidden, *d_output;
     cudaMalloc(&d_input, INPUT_SIZE * sizeof(double));
     cudaMalloc(&d_hidden, HIDDEN_SIZE * sizeof(double));
     cudaMalloc(&d_output, OUTPUT_SIZE * sizeof(double));
 
+    // Copy the numerical image into GPU variable.
     cudaMemcpy(d_input, input, INPUT_SIZE * sizeof(double), cudaMemcpyHostToDevice);
 
-    int threadsPerBlock = 128;
-    int numBlocks = (HIDDEN_SIZE + threadsPerBlock - 1) / threadsPerBlock;
-    forward_hidden_kernel<<<numBlocks, threadsPerBlock>>>(net->d_W1, net->d_b1, d_input, d_hidden);
+    int THREADSPERBLOCK = -1, BLOCKSIZE = -1;
+
+    // Calculates the hidden layer weights, and applys ReLU activation.
+    THREADSPERBLOCK = 32;
+    BLOCKSIZE = (HIDDEN_SIZE + THREADSPERBLOCK - 1) / THREADSPERBLOCK;
+    forward_hidden_kernel<<<BLOCKSIZE, THREADSPERBLOCK>>>(net->d_W1, net->d_b1, d_input, d_hidden);
     cudaDeviceSynchronize();
 
-    threadsPerBlock = 32;
-    numBlocks = (OUTPUT_SIZE + threadsPerBlock - 1) / threadsPerBlock;
-    forward_output_kernel<<<numBlocks, threadsPerBlock>>>(net->d_W2, net->d_b2, d_hidden, d_output);
+    // Calculates the output layer weights, using hidden weights.
+    THREADSPERBLOCK = 16;
+    BLOCKSIZE = (OUTPUT_SIZE + THREADSPERBLOCK - 1) / THREADSPERBLOCK;
+    forward_output_kernel<<<BLOCKSIZE, THREADSPERBLOCK>>>(net->d_W2, net->d_b2, d_hidden, d_output);
     cudaDeviceSynchronize();
 
-    softmax_kernel<<<1, OUTPUT_SIZE>>>(d_output);
-    cudaDeviceSynchronize();
-
+    // Copy back data from the Device.
     cudaMemcpy(hidden, d_hidden, HIDDEN_SIZE * sizeof(double), cudaMemcpyDeviceToHost);
     cudaMemcpy(output, d_output, OUTPUT_SIZE * sizeof(double), cudaMemcpyDeviceToHost);
+
+    // Apply softmax on the output.
+    softmax(output, OUTPUT_SIZE);
 
     cudaFree(d_input);
     cudaFree(d_hidden);
@@ -212,14 +184,14 @@ void forward(NeuralNetwork* net,
 
 // Kernel to compute hidden layer gradient for backpropagation.
 __global__ void compute_d_hidden(double* d_hidden, const double* W2, const double* d_output, const double* hidden) {
-    int i = threadIdx.x;
-    if (i < HIDDEN_SIZE) {
-        double grad = 0;
-        for (int j = 0; j < OUTPUT_SIZE; j++) {
-            grad += W2[j * HIDDEN_SIZE + i] * d_output[j];
-        }
-        d_hidden[i] = grad * (hidden[i] > 0);
+    int index = threadIdx.x;
+    if (index >= HIDDEN_SIZE)  return;
+    
+    double gradient = 0;
+    for (int outputcol = 0; outputcol < OUTPUT_SIZE; outputcol++) {
+        gradient += W2[outputcol * HIDDEN_SIZE + index] * d_output[outputcol];
     }
+    d_hidden[index] = gradient * (hidden[index] > 0);
 }
 
 // Kernel to update output layer weights.
@@ -245,6 +217,7 @@ __global__ void updateW1(double* W1, const double* d_hidden, const double* input
 // Backward pass: compute gradients and update device weights.
 void backward(NeuralNetwork* net, double* input, double* hidden, double* output, double* target) {
     double d_output[OUTPUT_SIZE], d_hidden[HIDDEN_SIZE];
+    
     // Compute gradient for output layer.
     for (int i = 0; i < OUTPUT_SIZE; i++) {
         d_output[i] = output[i] - target[i];
@@ -266,15 +239,13 @@ void backward(NeuralNetwork* net, double* input, double* hidden, double* output,
     cudaMemcpy(d_hidden_forward, hidden, HIDDEN_SIZE * sizeof(double), cudaMemcpyHostToDevice);
 
     // Compute hidden layer gradient on device.
-    compute_d_hidden<<<1, HIDDEN_SIZE>>>(d_hidden_d, net->d_W2, d_output_d, d_hidden_forward);
+    int THREADSPERBLOCK = 128;  
+    int BLOCKSIZE = (HIDDEN_SIZE + THREADSPERBLOCK - 1) / THREADSPERBLOCK;
+    compute_d_hidden<<<BLOCKSIZE, THREADSPERBLOCK>>>(d_hidden_d, net->d_W2, d_output_d, d_hidden_forward);
     cudaDeviceSynchronize();
 
     // Copy the computed hidden gradient back to host.
     cudaMemcpy(d_hidden, d_hidden_d, HIDDEN_SIZE * sizeof(double), cudaMemcpyDeviceToHost);
-    for (int i = 0; i < HIDDEN_SIZE; i++) {
-        // Use the host copy of d_hidden for bias update (if desired)
-        d_hidden[i] = d_hidden[i]; // This line is just for clarity.
-    }
 
     // Define grid and block dimensions for weight update kernels.
     dim3 blockDim(16, 16);
@@ -292,7 +263,6 @@ void backward(NeuralNetwork* net, double* input, double* hidden, double* output,
     }
 
     for (int i = 0; i < HIDDEN_SIZE; i++) {
-        // For d_hidden bias update, you could use the d_hidden computed on device.
         net->b1[i] -= LEARNING_RATE * d_hidden[i];
     }
 
@@ -378,6 +348,7 @@ double** loadMNISTImages(const char* filename, int numImages) {
             images[i][j] = pixel / 255.0;
         }
     }
+
     fclose(file);
     return images;
 }
@@ -398,10 +369,12 @@ double** loadMNISTLabels(const char* filename, int numLabels) {
             fclose(file);
             exit(EXIT_FAILURE);
         }
+
         for (int j = 0; j < OUTPUT_SIZE; j++) {
             labels[i][j] = (j == label) ? 1.0 : 0.0;
         }
     }
+
     fclose(file);
     return labels;
 }
@@ -412,11 +385,12 @@ void freeNetwork(NeuralNetwork* net) {
     freeMatrix(net->W2, OUTPUT_SIZE);
     free(net->b1);
     free(net->b2);
+    free(net);
+    
     cudaFree(net->d_W1);
     cudaFree(net->d_W2);
     cudaFree(net->d_b1);
     cudaFree(net->d_b2);
-    free(net);
 }
 
 // Main function.
