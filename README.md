@@ -4,18 +4,18 @@ This project implements a feedforward neural network for handwritten digit class
 
 ## Project Versions
 
-### ✅ **Version 1: Serial Implementation (CPU)**
+### **Version 1: Serial Implementation (CPU)**
 - Basic feedforward neural network.
 - Forward and backward propagation done entirely on the CPU.
 - No GPU acceleration.
 - Acts as the baseline for performance comparison.
 
-### ✅ **Version 2: Naive CUDA Implementation**
+### **Version 2: Naive CUDA Implementation**
 - Introduces CUDA kernels for matrix operations and activations.
 - Forward and backward passes parallelized using simple GPU kernels.
 - Frequent memory transfers between CPU and GPU lead to suboptimal performance.
 
-### ✅ **Version 3: Optimized CUDA Implementation**
+### **Version 3: Optimized CUDA Implementation**
 - Profiling revealed that `Forward()` and `Backward()` functions were the bottlenecks.
 - Weights, biases, and hidden variables were offloaded to the GPU to reduce memory transfers.
 - 2D GPU kernels were used for computationally intensive loops.
@@ -23,7 +23,7 @@ This project implements a feedforward neural network for handwritten digit class
 - Float data type was chosen over double to boost speed while accepting minimal precision loss.
 - Achieves best overall execution time.
 
-### ✅ **Version 4: cuBLAS-Accelerated Implementation**
+### **Version 4: cuBLAS-Accelerated Implementation**
 - Leverages NVIDIA's cuBLAS library for high-performance matrix multiplications.
 - Replaces custom CUDA kernels with cuBLAS operations for forward and backward propagation.
 - While cuBLAS provides efficient operations, the overhead of integrating with smaller custom layers leads to performance trade-offs in this case.
