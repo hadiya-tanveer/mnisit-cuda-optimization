@@ -37,7 +37,7 @@ This project implements a feedforward neural network for handwritten digit class
 | V1      | Serial (CPU only)          | 79s            |
 | V2      | Naive CUDA                 | 24s            |
 | V3      | Optimized CUDA             | 14s            |
-| V4      | cuBLAS                     | 28s            |
+| V4      | cuBLAS                     | 8s            |
 
 ---
 
