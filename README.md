@@ -1,46 +1,137 @@
-# MNIST Neural Network Classification (CUDA Optimized)
-
-This project implements a feedforward neural network for handwritten digit classification using the MNIST dataset. It explores performance optimization through different versions, starting from a serial CPU-based implementation and gradually integrating CUDA for GPU acceleration. Each version focuses on enhancing performance through better use of GPU resources, memory management, and parallelism.
-
-## Project Versions
-
-### **Version 1: Serial Implementation (CPU)**
-- Basic feedforward neural network.
-- Forward and backward propagation done entirely on the CPU.
-- No GPU acceleration.
-- Acts as the baseline for performance comparison.
-
-### **Version 2: Naive CUDA Implementation**
-- Introduces CUDA kernels for matrix operations and activations.
-- Forward and backward passes parallelized using simple GPU kernels.
-- Frequent memory transfers between CPU and GPU lead to suboptimal performance.
-
-### **Version 3: Optimized CUDA Implementation**
-- Profiling revealed that `Forward()` and `Backward()` functions were the bottlenecks.
-- Weights, biases, and hidden variables were offloaded to the GPU to reduce memory transfers.
-- 2D GPU kernels were used for computationally intensive loops.
-- Kernel launch parameters were tuned for performance, using 256 threads per block.
-- Float data type was chosen over double to boost speed while accepting minimal precision loss.
-- Achieves best overall execution time.
-
-### **Version 4: cuBLAS-Accelerated Implementation**
-- Leverages NVIDIA's cuBLAS library for high-performance matrix multiplications.
-- Replaces custom CUDA kernels with cuBLAS operations for forward and backward propagation.
-- While cuBLAS provides efficient operations, the overhead of integrating with smaller custom layers leads to performance trade-offs in this case.
+# MNIST Digit Classification Using Neural Networks and CUDA Optimization
 
 ---
 
-## Performance Comparison
+## Abstract
 
-| Version | Description                | Execution Time |
-|---------|----------------------------|----------------|
-| V1      | Serial (CPU only)          | 79s            |
-| V2      | Naive CUDA                 | 24s            |
-| V3      | Optimized CUDA             | 14s            |
-| V4      | cuBLAS                     | 8s            |
+The MNIST handwritten digit classification problem is a well-known benchmark in computer vision and deep learning. It includes 60,000 training and 10,000 testing images of 28x28 grayscale digits (0–9).
+
+Neural networks with ReLU activation and softmax output are ideal for this task. The model is trained using forward and backward propagation with optimization techniques like gradient descent.
+![MNIST Dataset Sample]([images/mnist_sample.png](https://images.app.goo.gl/QNWwcdFGvkwhdSyw6))
+
+---
+
+## Overview
+
+This project used a neural network to classify digits from the MNIST dataset. The network consisted of an input layer, hidden layer with ReLU, and an output layer with softmax. Training involved comparing predicted outputs to actual labels and updating weights through backpropagation.
+
+Once trained, the model’s performance was evaluated on unseen test data.
+
+---
+
+## Code Overview
+
+Profiling revealed the `Forward()` and `Backward()` functions as the most time-consuming. Optimization involved:
+
+- Offloading weights, biases, and hidden variables to the GPU.
+- Replacing 2D CPU loops with GPU kernels.
+- Reducing memory transfers and kernel launches.
+- Using `float` instead of `double` for better performance.
+
+---
+
+## Implementation
+
+### 1. Serial Implementation (V1)
+
+- Forward pass: input → hidden (ReLU) → output (softmax)
+- Backpropagation: error used to adjust weights with gradient descent
+- Evaluation on test data
+
+**Performance:**
+
+| Epoch | Accuracy (%) | Time (s) |
+|-------|--------------|----------|
+| 01    | 92.02        | 26.13    |
+| 02    | 96.89        | 26.14    |
+| 03    | 97.86        | 26.25    |
+
+- **Total Accuracy:** 97.00%  
+- **Total Training Time:** 78.65s  
+
+---
+
+### 2. Naive Implementation (V2)
+
+- GPU used for computations, but with frequent `cudaMemcpy` for each variable.
+- Showed benefits of GPU parallelism but suffered from memory transfer overhead.
+
+**Performance:**
+
+| Epoch | Accuracy (%) | Time (s) |
+|-------|--------------|----------|
+| 01    | 91.92        | 8.34     |
+| 02    | 96.91        | 8.34     |
+| 03    | 97.90        | 8.32     |
+
+- **Total Accuracy:** 96.00%  
+- **Total Training Time:** 24.93s  
+
+---
+
+### 3. Optimized Implementation (V3)
+
+Key improvements:
+
+- Used shared memory to reduce latency.
+- Reduced CUDA kernel launches.
+- Combined operations into fewer loops.
+- Used atomic functions to ensure conflict-free updates.
+- Minimized `cudaMemcpy` calls (from 16 to ~4).
+- Adjusted launch configuration for better resource use.
+
+**Performance:**
+
+| Epoch | Accuracy (%) | Time (s) |
+|-------|--------------|----------|
+| 01    | 91.86        | 4.77     |
+| 02    | 96.89        | 4.78     |
+| 03    | 97.80        | 4.77     |
+
+- **Total Accuracy:** 96.82%  
+- **Total Training Time:** 14.31s  
+
+> Used `float` instead of `double` for better performance, as precision loss was acceptable.
+
+---
+
+### 4. Tensor Cores Implementation (V4)
+
+- Used NVIDIA tensor cores via cuBLAS library (e.g., `cublasDgemv`, `cublasDger`).
+- Offloaded key linear algebra operations for faster computation.
+- Reduced computational time and improved memory efficiency.
+
+**Performance:**
+
+| Epoch | Accuracy (%) | Time (s) |
+|-------|--------------|----------|
+| 01    | 92.02        | 2.97     |
+| 02    | 96.87        | 2.98     |
+| 03    | 97.81        | 2.97     |
+
+- **Total Accuracy:** 96.99%  
+- **Total Training Time:** 8.93s  
+
+---
+
+## Performance Analysis
+
+| Version                  | Execution Time (s) | Speedup (vs V1) |
+|--------------------------|--------------------|------------------|
+| Version 2 (Naive)        | 24.93               | 3.29×            |
+| Version 3 (Optimized)    | 14.31               | 5.64×            |
+| Version 4 (Tensor Cores) | 9.00                | 8.73×            |
+
+- Performance improved significantly with CUDA optimizations.
+- Key techniques included reducing kernel launches, optimizing shared memory, using `float`, and minimizing memory transfers.
 
 ---
 
 ## Conclusion
 
-The progression from a serial implementation to an optimized CUDA version demonstrates the impact of GPU acceleration and memory optimization in deep learning workloads. While cuBLAS offers powerful matrix operations, custom-tuned kernels in V3 proved more effective for this specific task. This project highlights the importance of profiling and targeted optimization when working with GPU-based neural networks.
+Using a neural network for MNIST digit classification produced successful results. CUDA acceleration significantly sped up training, particularly in forward and backward propagation.
+
+By offloading heavy computations to the GPU, minimizing memory transfers, and using optimized kernel configurations, the system achieved faster and more efficient training.
+
+These results demonstrate how parallel computing with CUDA can improve scalability and responsiveness in deep learning applications.
+---
