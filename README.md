@@ -7,7 +7,7 @@
 The MNIST handwritten digit classification problem is a well-known benchmark in computer vision and deep learning. It includes 60,000 training and 10,000 testing images of 28x28 grayscale digits (0–9).
 
 Neural networks with ReLU activation and softmax output are ideal for this task. The model is trained using forward and backward propagation with optimization techniques like gradient descent.
-![MNIST Dataset Sample]([images/mnist_sample.png](https://images.app.goo.gl/QNWwcdFGvkwhdSyw6))
+![MNIST Dataset Sample](images/mnist.png)
 
 ---
 
@@ -21,8 +21,10 @@ Once trained, the model’s performance was evaluated on unseen test data.
 
 ## Code Overview
 
-Profiling revealed the `Forward()` and `Backward()` functions as the most time-consuming. Optimization involved:
+Profiling revealed the `Forward()` and `Backward()` functions as the most time-consuming. 
+![Profiling Results using GPROF](images/profiling results.png)
 
+Optimization involved:
 - Offloading weights, biases, and hidden variables to the GPU.
 - Replacing 2D CPU loops with GPU kernels.
 - Reducing memory transfers and kernel launches.
@@ -121,6 +123,8 @@ Key improvements:
 | Version 2 (Naive)        | 24.93               | 3.29×            |
 | Version 3 (Optimized)    | 14.31               | 5.64×            |
 | Version 4 (Tensor Cores) | 9.00                | 8.73×            |
+
+![Graph for execution times](images/performance analysis.png)
 
 - Performance improved significantly with CUDA optimizations.
 - Key techniques included reducing kernel launches, optimizing shared memory, using `float`, and minimizing memory transfers.
